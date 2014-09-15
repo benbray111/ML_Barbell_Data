@@ -1,0 +1,191 @@
+Weight Lifting - Predicting Quality of Exercise
+===============================================
+
+For this assignment I built a random forest model to correctly predict the classes of all 20 observations in the test set provided.
+
+I tried several approaches, but was unable to improve on the accuracy score of a random forest model, run with the defaults. One of the alternate methods I tried (Random Forest with PCA) is described below.
+
+I reduced the 159 predictors in the datasets to 53, mostly by removing missing data, but also by removing variables which were clearly irrelevant. 
+
+I then separated the training set into training and cross validation subsets, each consisting of 50 percent of the total observations. I realize this is a bit smaller proportion of a training set than is standard, but the random forest algorithm was running very slowly on my computer so I reduced the size.
+
+The accuracy rate for this model, run on the cross validation set, was .9903
+I would expect the out of sample error (as run on the test set of 20 observations) to be similar. 
+ 
+
+Data Cleanup
+------------
+
+Here is a summary of the processing of the data I did.
+
+I downloaded the two datasets, which each consist of 160 variables. I summarized the variables in order to understand which should be considered factors, which should be considered numeric, and which should be excluded from the analysis because they were clearly irrelevant (for example, the unique id for the record.)
+There was a great deal of missing data in these datasets. For many variables, data only existed if the new_window variable was yes (which ony accounted for about 2 percent of the observations in the training set, and none of the observations in the test set.)
+Because of this, I decided to eliminate any variables which had any missing data. I checked to see if all of these variables were also missing data in the test set. Indeed they were, so those omissions should not affect our final results.
+
+*Load the data*
+
+```{r echo=TRUE}
+setwd("C:\\Users\\Ben\\SkyDrive\\Documents\\Certifications and training\\Data Science Specialization\\8 - Practical Machine Learning\\project")
+
+training<-"pml-training.csv"
+testing<-"pml-testing.csv"
+
+#Load data using the stringsAsFactor=FALSE setting to avoid unwanted #manipuation of the data before it has been examined.
+trainingTable<-read.table(training, header = TRUE, sep=",", stringsAsFactors=FALSE)
+testingTable<-read.table(testing, header = TRUE, sep=",", stringsAsFactors=FALSE)
+```
+
+After loading the data into two dataframes I did some analysis of the variables we have to work with by creating a data frame which shows certain attributes for each variable.
+
+```{r echo=TRUE, cache=TRUE}
+#functions to analyze variables
+countNas<-function(v){sum(is.na(v))}
+countUnique<-function(v){length(unique(v))}
+
+#create data frame which shows the names and certain relevant attributes #for each variable
+
+DataOverview<-data.frame(cbind(apply(trainingTable, 2, countNas), apply(trainingTable, 2, countUnique), apply(trainingTable, 2, is.numeric), apply(trainingTable, 2, is.factor), apply(trainingTable, 2, is.character), names(trainingTable)))
+colnames(DataOverview)<-c("NAs", "Unique", "Num", "Factor", "Char", "VarNames")
+
+head(DataOverview)
+```
+
+After a bit of exploration of this data, I created a few vectors to organize the variables into categories which would be useful to control which are converted to factors, which are converted to numerics, and which are used as predictors.
+
+```{r echo=TRUE, cache=TRUE}
+#identify date/time related variables
+DateVariables<-DataOverview$VarNames %in% c("raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp")
+
+#By looking at the variables which had a low number of unique values, I
+#identified those which I thought should be converted to factors.
+ConvertToFactor<-DataOverview$VarNames %in% c("user_name", "new_window", "classe")
+
+#X is a unique ID and should not be used for prediction. It also appears to #me that we are not supposed to be using any information about windows in #our analysis because our testing set is not formatted in a way that would #allow analysis of multiple observations taken during different parts of a #window. Therefore I am eliminating the variables which describe this.
+NonPredictor<-DataOverview$VarName %in% c("X",  "new_window", "num_window")
+
+#combines previous categories to show which we do not need to convert to numeric
+DontConvertToNumeric <-DateVariables + ConvertToFactor
+#reverses the DontConvertToNumeric logical vector
+ConvertToNumeric<- abs(DontConvertToNumeric-1)
+```
+
+Using the categories created above, I converted the appropriate variables to numerics and factors.
+
+```{r echo=TRUE, warning=FALSE}
+###do conversions to factors and numerics
+#convert factors for training set
+for (a in 1:length(ConvertToFactor)) {
+  if (ConvertToFactor[a]==TRUE)    
+  {trainingTable[,a]<-as.factor(trainingTable[,a])}
+};
+
+#convert factors for testing set
+for (a in 1:length(ConvertToFactor)) {
+  if (ConvertToFactor[a]==TRUE)
+  {testingTable[,a]<-as.factor(testingTable[,a])}
+};
+
+#convert numerics for training set
+for (a in 1:length(ConvertToNumeric)){
+  if (ConvertToNumeric[a]==TRUE)    
+  {trainingTable[,a]<-as.numeric(trainingTable[,a])}
+};
+#convert numerics for testing set
+for (a in 1:length(ConvertToNumeric)) {
+  if (ConvertToNumeric[a]==TRUE)
+  {testingTable[,a]<-as.numeric(testingTable[,a])}
+};
+
+```
+
+Recalculate the DataOverview dataframe to show which variables have missing values after the attempt to convert them to numeric.
+
+```{r}
+DataOverview<-data.frame(cbind(apply(trainingTable, 2, countNas), apply(trainingTable, 2, countUnique), apply(trainingTable, 2, is.numeric), apply(trainingTable, 2, is.factor), apply(trainingTable, 2, is.character), names(trainingTable)))
+colnames(DataOverview)<-c("NAs", "Unique", "Num", "Factor", "Char", "VarNames")
+
+#Assign variables with missing values to a vector
+VarWithNA<-DataOverview$NAs!="0"
+````
+
+Using the information we have collected so far, note the variables which will be included in the cleaned datasets for use as predictors.
+
+```{r}
+DontIncludeAsPredictor<-NonPredictor + VarWithNA + DateVariables
+IncludeAsPredictor<-abs(DontIncludeAsPredictor-1)
+
+
+#For ease of notation, create two new datasets with only the relevant #variables.
+ProcessedTrainingData<-trainingTable[,which(as.logical(IncludeAsPredictor))]
+colnames(ProcessedTrainingData)<-names(trainingTable[which(as.logical(IncludeAsPredictor))])
+ProcessedTestData<-testingTable[,which(as.logical(IncludeAsPredictor))]
+colnames(ProcessedTestData)<-names(testingTable[which(as.logical(IncludeAsPredictor))])
+
+```
+
+
+Model Creation
+--------------
+The first step in creating a model was to further subdivide the "test set" we had been given into further test and cross validation sets.
+
+Steps shown above during data cleaning have reduced our original 160 variables to just 53 predictors.
+
+I made the training set a bit smaller (only 50 percent of the total population) than is standard because it was taking a very long time to train these models on my computer.
+```{r}
+library(caret)
+set.seed(123)
+t1<-createDataPartition(y=ProcessedTrainingData$classe, p=0.5, list=FALSE)
+train_subset<-ProcessedTrainingData[t1,]
+cv_subset<-ProcessedTrainingData[-t1,]
+```
+
+I tried using the "rpart" method in a few different configurations. Although I was able to make adjustments and improve my score somewhat, I was still not getting good accuracy. The accuracy score was in the realm of 50 percent.
+
+**Random Forest**
+
+I decided to try the "rf" method with the default settings, and had good success with that, although it does take a lot of computational power to run this algorithm.
+Here is the code I used to create it.
+
+```
+model_fit_rf2<-train(classe ~ ., data=train_subset, method="rf")
+predictions<-predict(model_fit_rf2, newdata=cv_subset)
+confusionMatrix(predictions, cv_subset$classe)
+```
+
+The accuracy rate for this model, run on the cross validation set, was .9903.  
+I would expect the out of sample error (as run on the test set of 20 observations) to be similar. 
+
+
+**Pre-processing: Principal Components Analysis**
+
+I thought I would also try some pre-processing on the data to see if I could improve the score. I was unable to improve the score using this, so did not include it in my final model. However, I will detail my work with this below.
+
+The code below shows variables from the training set which are correlated with another variable by at least 80 percent.
+```{r}
+M <-abs(cor(train_subset[,-c(1,54)]))
+diag(M)<-0
+which(M > 0.8,arr.ind=T)
+```
+
+Since there were a handful of them which were highly correlated, I thought it might be useful to use PCA to reduce the number of variables in the training set, before running a random forest model on the reduced data.
+
+```
+#create PCA preprocessed object for the training set
+PCpreProc<-preProcess(train_subset[, -c(1,54)], method="pca", thresh=.9)
+#Using that object, create PCA variabes for the training set
+PCVars<-predict(PCpreProc, train_subset[, -c(1,54)])
+#fit a random forest model which uses the PCA variables to predict "classe" for the training set
+model_fit_rf_PC<-train(train_subset$classe ~ ., data=PCVars, method="rf") 
+
+#USing the same preprocessing object used on the training set, create PCA variables for the CV set
+PCVarsCV<-predict(PCpreProc, cv_subset[, -c(1,54)])
+#predict the classes of the CV set based on the PCA variables shown above.
+#use confusionMatrix to evaluate the accuracy of this model
+confusionMatrix(cv_subset$classe, predict(model_fit_rf_PC, PCVarsCV))
+```
+
+This gave an accuracy rate of 0.9677
+
+This rate is lower than the rate for just a normal Random Forest. However, part of the reduction in accuracy may have had to do with the fact that I was forced to remove the "user_name" variable from the analysis. It was not possible to run PCA on a group of variables unless they were all numeric, and I had problems combining the factor back into the variables being used for the model.
+
+So, it seems possible that PCA, combined with the use of the user_name factor, might have actually improved the score here.
